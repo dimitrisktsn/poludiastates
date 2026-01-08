@@ -1,50 +1,63 @@
 from __future__ import annotations
-from typing import List, Set, Sequence, Dict, Tuple
+from typing import List, Set, Sequence, Dict, Tuple, Iterable, Optional
+import hashlib
+import math
 import random
 
-
 class MinHashLSH:
-    """
-    Απλή υλοποίηση MinHash + LSH για σύνολα tokens (π.χ. genres).
-    - Κάθε κείμενο -> σύνολο από tokens (set[str])
-    - Υπολογίζουμε MinHash signatures
-    - Χρησιμοποιούμε LSH banding για γρήγορο approximate similarity search
-    """
-
-    def __init__(self, num_perm: int = 64, num_bands: int = 8, seed: int = 42):
-        assert num_perm % num_bands == 0, "num_perm must be divisible by num_bands"
+    
+    "Υλοποίηση MinHash + LSH για σύνολα tokens, με determinism και banding buckets."
+    def __init__(
+        self,
+        num_perm: int = 64,
+        num_bands: int = 8,
+        seed: int = 42,
+        fallback_all: bool = False,
+    ):
+        assert num_perm % num_bands == 0
 
         self.num_perm = num_perm
         self.num_bands = num_bands
         self.rows_per_band = num_perm // num_bands
         self.seed = seed
+        self.fallback_all = fallback_all
 
         self._rand = random.Random(seed)
-        self._prime = 4294967311  # μεγάλο πρώτο για hashing
+        #xrisimopoioume 64-bit proto arithmo
+        self._prime = 18446744073709551557
 
         self._hash_params = self._generate_hash_params(num_perm)
 
         self.doc_sets: List[Set[str]] = []
         self.signatures: List[List[int]] = []
-        self.buckets: Dict[Tuple[int, int], List[int]] = {}
+        #bucket key: (band_index, tuple_of_ints)
+        self.buckets: Dict[Tuple[int, Tuple[int, ...]], List[int]] = {}
 
     def _generate_hash_params(self, k: int):
         params = []
         for _ in range(k):
-            a = self._rand.randint(1, self._prime - 1)
-            b = self._rand.randint(0, self._prime - 1)
+            a = self._rand.randrange(1, self._prime - 1)
+            b = self._rand.randrange(0, self._prime - 1)
             params.append((a, b))
         return params
 
-    def _minhash_signature(self, s: Set[str]) -> List[int]:
-        """Υπολογίζει MinHash signature για ένα σύνολο tokens."""
+    @staticmethod
+    def _token_to_int(token: str) -> int:
+        
+        "Μετατρέπει token σε σταθερό 64-bit ακέραιο (SHA-1)."
+        h = hashlib.sha1(token.encode("utf8")).digest()
+        return int.from_bytes(h[:8], "big")
+
+    def _minhash_signature(self, s: Iterable[str]) -> List[int]:
+       
+        "Υπολογίζει MinHash υπογραφή για σύνολο tokens."
+        #an s einai adeio tote epistrefei high sentinel ipografi
         if not s:
-            # για άδειο set, signature με πολύ μεγάλες τιμές
             return [self._prime] * self.num_perm
 
         sig = [self._prime] * self.num_perm
         for token in s:
-            x = hash(token) & 0xFFFFFFFF  # 32-bit
+            x = self._token_to_int(token)
             for i, (a, b) in enumerate(self._hash_params):
                 hv = (a * x + b) % self._prime
                 if hv < sig[i]:
@@ -52,10 +65,8 @@ class MinHashLSH:
         return sig
 
     def fit(self, docs: Sequence[Set[str]]) -> None:
-        """
-        Χτίζει το LSH index πάνω σε λίστα από σύνολα tokens.
-        docs: list[set[str]]
-        """
+        
+        "Κατασκευάζει το LSH index από λίστα συνόλων tokens."
         self.doc_sets = [set(d) for d in docs]
         self.signatures = []
         self.buckets = {}
@@ -64,39 +75,37 @@ class MinHashLSH:
             sig = self._minhash_signature(s)
             self.signatures.append(sig)
 
-            # LSH banding
+            #LSH banding pou xrisimopoioume ints gia keys
             for band in range(self.num_bands):
                 start = band * self.rows_per_band
                 end = start + self.rows_per_band
                 band_slice = tuple(sig[start:end])
-                key = (band, hash(band_slice))
+                key = (band, band_slice)
                 self.buckets.setdefault(key, []).append(doc_id)
 
     def query(self, s: Set[str]) -> List[int]:
-        """
-        Επιστρέφει candidate doc ids ταξινομημένα κατά Jaccard similarity με το s.
-        """
         if not self.doc_sets:
             return []
 
         sig = self._minhash_signature(s)
         candidates: set[int] = set()
 
-        # Συγκέντρωση υποψήφιων από τα buckets
         for band in range(self.num_bands):
             start = band * self.rows_per_band
             end = start + self.rows_per_band
             band_slice = tuple(sig[start:end])
-            key = (band, hash(band_slice))
+            key = (band, band_slice)
             bucket = self.buckets.get(key)
             if bucket:
                 candidates.update(bucket)
 
-        # Αν δεν βρήκαμε κανέναν υποψήφιο, fallback: όλα τα docs candidates
         if not candidates:
-            candidates = set(range(len(self.doc_sets)))
+            if self.fallback_all:
+                candidates = set(range(len(self.doc_sets)))
+            else:
+                return []
 
-        # Ταξινόμηση των candidate με βάση την exact Jaccard similarity
+        #rerank me jaccard similarity
         scored = []
         for doc_id in candidates:
             sim = self.jaccard(s, self.doc_sets[doc_id])
@@ -107,7 +116,6 @@ class MinHashLSH:
 
     @staticmethod
     def jaccard(a: Set[str], b: Set[str]) -> float:
-        """Jaccard similarity μεταξύ δύο συνόλων."""
         if not a and not b:
             return 1.0
         inter = len(a & b)
@@ -115,3 +123,4 @@ class MinHashLSH:
         if union == 0:
             return 0.0
         return inter / union
+

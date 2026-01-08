@@ -30,51 +30,49 @@ def bbox_intersects(a: BBox, b: BBox) -> bool:
 
 @dataclass
 class RTreeEntry:
-    """Μια εγγραφή σε R-tree: bounding box + είτε child node είτε index point."""
+   
+    "Εγγραφή R-Tree: bbox και είτε child είτε index."
     bbox: BBox
-    child: Optional["RTreeNode"] = None  # αν είναι internal node
-    index: Optional[int] = None          # αν είναι leaf entry
+    child: Optional["RTreeNode"] = None  # an einai internal node
+    index: Optional[int] = None          # an einai leaf entry
 
 
 @dataclass
 class RTreeNode:
-    """Κόμβος ενός R-tree."""
+    "Κόμβος ενός R-tree."
     is_leaf: bool
     entries: List[RTreeEntry]
     parent: Optional["RTreeNode"] = None
 
 
 class RTree:
-    """
-    Απλή υλοποίηση R-tree για 2D points.
-    Χρησιμοποιούμε πολύ βασικό linear split για υπερχείλιση.
-    """
+    "Απλή υλοποίηση R-Tree για 2D σημεία με βασικό linear split."
+
 
     def __init__(self, max_entries: int = 16, min_entries: Optional[int] = None):
         self.max_entries = max_entries
         self.min_entries = min_entries if min_entries is not None else max_entries // 2
         self.root = RTreeNode(is_leaf=True, entries=[])
 
-    # ---------- INSERT ----------
-
+    #insertion
     def insert(self, index: int, bbox: BBox) -> None:
-        """Εισάγει ένα point (ως degenerate rectangle) στο R-tree."""
+        "Εισάγει ένα point (ως degenerate rectangle) στο R-tree."
         leaf = self._choose_leaf(self.root, bbox)
         leaf.entries.append(RTreeEntry(bbox=bbox, index=index))
 
-        # Αν έχει overflow, θα γίνει split και θα ενημερωθούν bboxes μέσω _handle_overflow
+        #overflow -> split
         if len(leaf.entries) > self.max_entries:
             self._handle_overflow(leaf)
         else:
-            # Απλή εισαγωγή: ενημέρωσε bboxes προς τα πάνω
+            #update ta bboxes pros ta pano
             self._adjust_bboxes_upwards(leaf)
 
     def _choose_leaf(self, node: RTreeNode, bbox: BBox) -> RTreeNode:
-        """Επιλογή leaf node όπου θα μπει το bbox."""
+        "Επιλογή leaf node όπου θα μπει το bbox."
         if node.is_leaf:
             return node
 
-        # Διαλέγουμε το child που χρειάζεται τη μικρότερη αύξηση εμβαδού
+        #dialegoume to child pou xreiazetai tin ligoteri auxisi emvadou
         best_entry = None
         best_increase = None
 
@@ -89,16 +87,16 @@ class RTree:
         return self._choose_leaf(best_entry.child, bbox)
 
     def _handle_overflow(self, node: RTreeNode) -> None:
-        """Διαχειρίζεται υπερχείλιση κόμβου (split)."""
+        "Διαχειρίζεται υπερχείλιση κόμβου (split)."
         new_node = self._split_node(node)
 
         if node.parent is None:
-            # Δημιουργία νέας ρίζας
+            #nea riza
             new_root = RTreeNode(is_leaf=False, entries=[])
             node.parent = new_root
             new_node.parent = new_root
 
-            # bbox των δύο παιδιών
+            #bbox ton 2 children
             bbox1 = self._compute_node_bbox(node)
             bbox2 = self._compute_node_bbox(new_node)
 
@@ -107,30 +105,27 @@ class RTree:
 
             self.root = new_root
         else:
-            # Προσθήκη new_node στον parent
+            #new node -> parent
             parent = node.parent
             bbox_new = self._compute_node_bbox(new_node)
             parent.entries.append(RTreeEntry(bbox=bbox_new, child=new_node))
             new_node.parent = parent
 
-            # Ενημερώνουμε το bbox του παλιού node στον parent
+            #update to bbox tou old node ston parent
             for entry in parent.entries:
                 if entry.child is node:
                     entry.bbox = self._compute_node_bbox(node)
                     break
 
-            # Αν σκάσει κι ο parent, συνεχίζουμε split παραπάνω,
-            # αλλιώς ενημερώνουμε τα bbox προς τη ρίζα
+            #an kanei overflow o aprent tote kanoume split parapano allios kanoume update ta bbox
             if len(parent.entries) > self.max_entries:
                 self._handle_overflow(parent)
             else:
                 self._adjust_bboxes_upwards(parent)
 
     def _adjust_bboxes_upwards(self, node: RTreeNode) -> None:
-        """
-        Ενημερώνει τα bounding boxes στους προγόνους του node,
-        μετά από αλλαγή στις entries του node (insert / split).
-        """
+        
+        "Ενημερώνει τα bounding boxes προς τα πάνω μετά από insert/split."
         current = node
         while current.parent is not None:
             parent = current.parent
@@ -141,18 +136,15 @@ class RTree:
             current = parent
 
     def _split_node(self, node: RTreeNode) -> RTreeNode:
-        """
-        Πολύ απλός linear split:
-        - Διαλέγει δύο seeds (τα πιο απομακρυσμένα μεταξύ τους)
-        - Μοιράζει τις υπόλοιπες entries με βάση ποιο group αυξάνει λιγότερο το bbox.
-        """
+       
+        "Κάνει linear split σε node: επιλέγει 2 seeds και μοιράζει entries με βάση την αύξηση bbox."
         entries = node.entries
         n = len(entries)
 
         if n <= self.max_entries:
             return node  # no split needed
 
-        # Βρίσκουμε τους δύο seeds
+        #ta 2 seeds
         best_pair = (0, 1)
         best_dist = -1.0
 
@@ -160,7 +152,7 @@ class RTree:
             for j in range(i + 1, n):
                 e1 = entries[i].bbox
                 e2 = entries[j].bbox
-                # "Απόσταση" των κέντρων των δύο bboxes
+                #apostasi ton kentron ton 2 boxes
                 cx1 = (e1[0] + e1[2]) / 2.0
                 cy1 = (e1[1] + e1[3]) / 2.0
                 cx2 = (e2[0] + e2[2]) / 2.0
@@ -172,21 +164,21 @@ class RTree:
 
         i1, i2 = best_pair
 
-        # Δημιουργούμε δύο νέους κόμβους (ο node θα reuse-αριστεί ως group1)
+        #2 nea nodes
         group1_entries = [entries[i1]]
         group2_entries = [entries[i2]]
 
         bbox1 = entries[i1].bbox
         bbox2 = entries[i2].bbox
 
-        # Μοιράζουμε τις υπόλοιπες entries
+        #share ta ipoloipa entries
         for k in range(n):
             if k == i1 or k == i2:
                 continue
             e = entries[k]
             b = e.bbox
 
-            # Αν χρειάζεται να εξαναγκάσουμε για min_entries
+            #an xreiazetai na exanagkasoume gia min entries
             remaining = n - len(group1_entries) - len(group2_entries)
             if len(group1_entries) + remaining == self.min_entries:
                 group1_entries.append(e)
@@ -197,7 +189,7 @@ class RTree:
                 bbox2 = bbox_union(bbox2, b)
                 continue
 
-            # Υπολογίζουμε την αύξηση εμβαδού για κάθε group
+            #auxisi emvadou gia kathe group
             new_bbox1 = bbox_union(bbox1, b)
             new_bbox2 = bbox_union(bbox2, b)
             inc1 = bbox_area(new_bbox1) - bbox_area(bbox1)
@@ -210,27 +202,24 @@ class RTree:
                 group2_entries.append(e)
                 bbox2 = new_bbox2
 
-        # Ο παλιός node παίρνει το group1, το group2 πάει στο new_node
+        #old node -> group1 , group2 -> new node
         node.entries = group1_entries
         new_node = RTreeNode(is_leaf=node.is_leaf, entries=group2_entries, parent=node.parent)
 
         return new_node
 
     def _compute_node_bbox(self, node: RTreeNode) -> BBox:
-        """Υπολογίζει το bounding box που καλύπτει όλες τις entries ενός node."""
+        "Υπολογίζει το bounding box που καλύπτει όλες τις entries ενός node."
         assert node.entries, "Node has no entries"
         bb = node.entries[0].bbox
         for e in node.entries[1:]:
             bb = bbox_union(bb, e.bbox)
         return bb
 
-    # ---------- RANGE QUERY ----------
 
     def range_query(self, query_rect: BBox) -> List[int]:
-        """
-        Επιστρέφει indices σημείων για τα οποία το bbox τους τέμνει το query_rect.
-        Στην περίπτωσή μας τα points είναι degenerate rectangles (x, y, x, y).
-        """
+       
+        "Επιστρέφει indices σημείων των οποίων το bbox τέμνει το query_rect (points ως degenerate rectangles)."
         results: List[int] = []
         self._range_query_node(self.root, query_rect, results)
         return results
@@ -244,9 +233,10 @@ class RTree:
                 continue
 
             if node.is_leaf:
-                # Leaf: αν τέμνει, προσθέτουμε το index
+                #an temnei to leaf tote kanoume add to index
                 if entry.index is not None:
                     results.append(entry.index)
             else:
-                # Internal node: κατεβαίνουμε στο child
+                #internal node -> katevainoume sto child
                 self._range_query_node(entry.child, query_rect, results)
+
